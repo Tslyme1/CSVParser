@@ -10,18 +10,6 @@ double randDouble(double max) {
     return static_cast<double>(rand()) / static_cast<double>(RAND_MAX / max);
 }
 
-void fillDataTest(double *A, double *x, double *b, int n) {
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            A[j + i*n] = i == j ? 2.0 : 1.0;
-        }
-    }
-    for (int i = 0; i < n; ++i) {
-        x[i] = 0.0;
-        b[i] = (double)(n+1);
-    }
-}
-
 void fillData(double *A, double *x, double *b, int n) {
     double u[n];
     for (int i = 0; i < n; ++i) {
