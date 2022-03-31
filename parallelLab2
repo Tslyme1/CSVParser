@@ -29,7 +29,7 @@ void fillData(double *A, double *x, double *b, int n) {
     }
 }
 
-void ompV2(double *A, double *x, double *b, int n) {
+void ompP(double *A, double *x, double *b, int n) {
 
     double yn[n], lenYn, lenB, tn1, tn2;
     bool running = true;
@@ -118,7 +118,7 @@ int main(int argc, char *argv[]) {
     fillData(A, x, b, n);
 
     double startTime = omp_get_wtime();
-    variant == 1 ? ompV1(A, x, b, n) : ompV2(A, x, b, n);
+    ompP(A, x, b, n);
     double endTime = omp_get_wtime();
 
     printAnswer(x, 10);
