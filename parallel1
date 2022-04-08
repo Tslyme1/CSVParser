@@ -75,7 +75,7 @@ void printAnswer(double *x, int n) {
     }
 }
 
-void calculateWorkTime(struct timeval startTime, struct timeval endTime) {
+void printWorkTime(struct timeval startTime, struct timeval endTime) {
     double deltaSec = (endTime.tv_sec - startTime.tv_sec);
     double deltaUSec = (endTime.tv_usec - startTime.tv_usec);
     printf("Working time: %.2f seconds\n", deltaSec + deltaUSec / 1e6);
