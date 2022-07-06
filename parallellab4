@@ -1,0 +1,221 @@
+#include <iostream>
+#include <stdlib.h>
+#include "mpi.h"
+#include <vector>
+
+void calc_line(int n, int current_line, int* alive, bool* field_part, bool* updated_field){
+
+    int line = n * current_line;
+    int* cells_around = new int[8];
+    
+    for(int i = 0; i < n; ++i){
+        int alive_around_qty = 0;
+        int pos = i;
+        int left = pos - 1;
+
+        if (left < 0) {
+            left = n - 1;
+        }
+
+        int right = pos + 1;
+
+        if (right == n) {
+            right = 0;
+        }
+
+        pos+=line;
+        left+=line;
+        right+=line;
+
+        cells_around[0] = left - n;
+        cells_around[1] = pos - n;
+        cells_around[2] = right - n;
+        cells_around[3] = left;
+        cells_around[4] = right;
+        cells_around[5] = left + n;
+        cells_around[6] = pos + n;
+        cells_around[7] = right + n;
+
+        for(int j = 0; j < 8; ++j){
+            if(field_part[cells_around[j]]){
+                ++alive_around_qty;
+            }
+        }
+
+        if(!field_part[pos] && alive_around_qty == 3){
+            updated_field[line + i] = true;
+            ++*alive;
+        }
+        else if(field_part[pos] && !(alive_around_qty < 2 || alive_around_qty > 3)){
+            updated_field[pos] = true;
+            ++*alive;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+
+    int size, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    if (argc < 2) {
+        if (rank == 0) {
+            std::cout << "number of args must be >= 2\n" << std::endl;
+        }
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    int s = atoi(argv[1]);
+    int n = atoi(argv[2]);
+
+    if (n / size < 2) {
+        if (rank == 0) {
+            std::cout << "too many processes" << std::endl;
+        }
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    int *elem_qty = (int *) calloc(size, sizeof(int));
+
+    for (int i = 0; i < s; ++i) {
+        elem_qty[i % size] += 1;
+    }
+
+    int *displs = (int *) calloc(size, sizeof(int));
+    int displ = 0;
+
+    for(int i = 0; i < size; ++i){
+        elem_qty[i] *= n;
+        displs[i] = displ;
+        displ += elem_qty[i] * sizeof(double);
+    }
+
+    int proc_elem_qty = elem_qty[rank] + 2 * n;
+    bool *field;
+    bool *field_part = (bool *) calloc(proc_elem_qty, sizeof(bool));
+    std::vector<std::pair<int, bool *> > history;
+    bool *is_same_vector = (bool *) calloc(0, sizeof(bool));
+
+    if (rank == 0) {
+        field = (bool *) calloc(s * n, sizeof(bool));
+        for (int i = 3; i < argc; ++i) {
+            int cell = atoi(argv[i]);
+            field[cell] = true;
+        }
+    }
+
+    int rank_next = rank + 1, rank_prev = rank - 1;
+
+    if (rank_next == size) {
+        rank_next = 0;
+    }
+
+    if (rank_prev == -1) {
+        rank_prev = size - 1;
+    }
+
+    double start = MPI_Wtime();
+    
+    MPI_Scatterv(field, elem_qty, displs, MPI_CXX_BOOL, field_part + n * sizeof(bool), elem_qty[rank], MPI_CXX_BOOL, 0, MPI_COMM_WORLD);
+    free(displs);
+
+    if (rank == 0) {
+        free(field);
+    }
+
+    bool continue_work = true;
+    int iteration = 0;
+    int alive_qty_old = 0;
+
+    for(int i = n; i < proc_elem_qty - n; ++i){
+        if(field_part[i]){
+            ++alive_qty_old;
+
+        }
+    }
+
+    bool* is_same_vectors;
+    while (continue_work && (iteration < 100000)){
+
+        is_same_vectors = (bool*)calloc(size * iteration, sizeof(bool));
+
+        MPI_Request send_request1, send_request2;
+        MPI_Isend(field_part + n * sizeof(bool), n, MPI_CXX_BOOL, rank_prev, 1, MPI_COMM_WORLD, &send_request1);
+        MPI_Isend(field_part + (proc_elem_qty - n)*sizeof(bool), n, MPI_CXX_BOOL, rank_next, 0, MPI_COMM_WORLD, &send_request2);
+
+        MPI_Request recv_request1, recv_request2;
+        MPI_Irecv(field_part, n, MPI_CXX_BOOL, rank_next, 1, MPI_COMM_WORLD, &recv_request2);
+        MPI_Irecv(field_part + elem_qty[rank] + n, n, MPI_CXX_BOOL, rank_prev, 0, MPI_COMM_WORLD, &recv_request1);
+
+        MPI_Request recv_vectors_request;
+
+        MPI_Iallgather(is_same_vector, iteration, MPI_CXX_BOOL, is_same_vectors, iteration, MPI_CXX_BOOL, MPI_COMM_WORLD, &recv_vectors_request);
+        int alive_qty = 0;
+        bool* updated_field = (bool*)calloc(proc_elem_qty, sizeof(bool));
+
+        for(int i = 2; i < elem_qty[rank]/n; ++i){
+            calc_line(n, i, &alive_qty, field_part, updated_field);
+        }
+
+        free(is_same_vector);
+
+        MPI_Wait(&recv_request1, MPI_STATUS_IGNORE);
+        calc_line(n, 1, &alive_qty, field_part, updated_field);
+
+        MPI_Wait(&recv_request2, MPI_STATUS_IGNORE);
+        calc_line(n, elem_qty[rank]/n, &alive_qty, field_part, updated_field);
+
+        history.push_back(std::make_pair(alive_qty_old, field_part));
+        alive_qty_old = alive_qty;
+        field_part = updated_field;
+
+        is_same_vector = (bool*)calloc(iteration + 1, sizeof(bool));
+        for(int j, i = iteration; i >= 0; --i){
+            is_same_vector[i] = true;
+            if(history[i].first == alive_qty){
+                for(j = n; j < proc_elem_qty - n; ++j){
+                    if(history[i].second[j] != field_part[j]){
+                        is_same_vector[i] = false;
+                        break;
+                    }
+                }
+
+            }else{
+                is_same_vector[i] = false;
+            }
+        }
+
+        MPI_Wait(&recv_vectors_request, MPI_STATUS_IGNORE);
+
+        for(int i = 0; i <= iteration; ++i){
+            bool all_parts_same = true;
+            for(int j = 0; j < size; ++j){
+                if(!is_same_vectors[i + j * iteration]){
+                    all_parts_same = false;
+                    break;
+                }
+            }
+            if(all_parts_same){
+                continue_work = false;
+            }
+        }
+        free(is_same_vectors);
+        MPI_Wait(&send_request1, MPI_STATUS_IGNORE);
+        MPI_Wait(&send_request2, MPI_STATUS_IGNORE);
+        ++iteration;
+    }
+    double end = MPI_Wtime();
+    if(rank == 0) {
+        std::cout << "end on iteration: " << iteration << std::endl;
+        std::cout << "time: " << end - start << std::endl;
+    }
+    free(field_part);
+    free(elem_qty);
+    for(int i = 0; i < history.size(); ++i){
+        free(history[i].second);
+    }
+    MPI_Finalize();
+    return 0;
+}
